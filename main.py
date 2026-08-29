@@ -60,46 +60,78 @@ def analyze_board(board: chess.Board, seconds: int = 90) -> str:
         
     return "\n".join(lines)
 
+
+def clean_html(raw_html: str) -> str:
+    """Usuwa tagi HTML i zamienia <br>, <p>, <div> na znaki nowej linii."""
+    text = re.sub(r'<br\s*/?>', '\n', raw_html, flags=re.IGNORECASE)
+    text = re.sub(r'</?(p|div|tr|table)[^>]*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', '', text)
+    return text
+
 def extract_clean_pgn(text: str) -> str:
     """
-    Wyciąga nagłówki [Tag ...] oraz linie z numerowanymi ruchami (np. 1.e4 c5...),
-    odrzucając polskie stopki o czasie i linki.
+    Wyciąga blok PGN od [Event ...] aż do gwiazdki lub wyniku (*, 1-0, 0-1, 1/2-1/2),
+    zapewniając poprawny odstęp między nagłówkami a listą posunięć.
     """
-    lines = text.splitlines()
-    clean_lines = []
+    text = clean_html(text)
+    
+    # 1. Znajdź początek PGN (pierwszy nagłówek)
+    start_idx = text.find('[Event')
+    if start_idx == -1:
+        return ""
+    
+    pgn_candidate = text[start_idx:]
+    
+    # 2. Obetnij tekst na końcu partii (wynik lub gwiazdka *)
+    # Szukamy sekwencji ruchów zakończonej *, 1-0, 0-1 lub 1/2-1/2
+    match = re.search(r'(\[Event[\s\S]*?(\*|1-0|0-1|1/2-1/2))', pgn_candidate)
+    if match:
+        pgn_candidate = match.group(1)
+        
+    lines = pgn_candidate.splitlines()
+    headers = []
+    movetext_parts = []
+    in_moves = False
     
     for line in lines:
         stripped = line.strip()
         if not stripped:
             continue
-        # Zostaw nagłówki PGN
         if stripped.startswith('['):
-            clean_lines.append(stripped)
-        # Zostaw linie z ruchami (zaczynają się od cyfry lub zawierają ruchy)
-        elif re.match(r'^\d+\.', stripped) or any(m in stripped for m in ['1-0', '0-1', '1/2-1/2', '*']):
-            clean_lines.append(stripped)
+            if not in_moves:
+                headers.append(stripped)
+        else:
+            # Ignoruj polskie stopki ICCF o czasie
+            if "Pozostały czas" in stripped or "Wyświetl partię" in stripped:
+                continue
+            in_moves = True
+            movetext_parts.append(stripped)
             
-    return '\n'.join(clean_lines)
+    # Standard PGN WYMAGA pustej linii między nagłówkami a ruchami!
+    clean_pgn = '\n'.join(headers) + '\n\n' + ' '.join(movetext_parts)
+    return clean_pgn
 
 def process_pgn(pgn_text: str):
     try:
         clean_text = extract_clean_pgn(pgn_text)
+        if not clean_text or '[Event' not in clean_text:
+            print("[DEBUG] Brak poprawnego bloku PGN w mailu.")
+            return
+
         pgn_io = io.StringIO(clean_text)
         game = chess.pgn.read_game(pgn_io)
         
         if not game:
-            print("[DEBUG] Nie udało się odczytać struktury PGN.")
+            print("[DEBUG] chess.pgn nie zdołał odczytać partii.")
             return
 
         white = game.headers.get("White", "Nieznany")
         black = game.headers.get("Black", "Nieznany")
         event = game.headers.get("Event", "Partia ICCF")
 
-        # Szukamy bezpośredniego linku do partii w całym mailu
         url_match = re.search(r'https?://(?:www\.)?iccf\.com/game\?id=\d+', pgn_text)
         game_url = url_match.group(0) if url_match else game.headers.get("Site", "https://www.iccf.com")
 
-        # Ustawiamy szachownicę i odtwarzamy ruchy
         board = game.board()
         moves_count = 0
         for move in game.mainline_moves():
@@ -114,6 +146,8 @@ def process_pgn(pgn_text: str):
 
         is_my_turn = (board.turn == chess.WHITE and is_white) or \
                      (board.turn == chess.BLACK and is_black)
+
+        print(f"[DEBUG] is_my_turn: {is_my_turn} (Biały: {is_white}, Czarny: {is_black})")
 
         if is_my_turn and not board.is_game_over():
             opponent = black if is_white else white
@@ -135,6 +169,11 @@ def process_pgn(pgn_text: str):
                 f"*Rekomendacje Stockfish (Top 3):*\n{top_lines}"
             )
             send_telegram(msg)
+        else:
+            if board.is_game_over():
+                print("[DEBUG] Partia jest już zakończona.")
+            elif not is_my_turn:
+                print("[DEBUG] To nie jest Twój ruch.")
 
     except Exception as e:
         print(f"Pominięto partię ze względu na błąd: {e}")
