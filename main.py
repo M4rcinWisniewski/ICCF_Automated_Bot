@@ -8,6 +8,7 @@ import chess
 import chess.engine
 import chess.pgn
 import requests
+import re
 
 load_dotenv()
 
