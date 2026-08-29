@@ -60,56 +60,48 @@ def analyze_board(board: chess.Board, seconds: int = 90) -> str:
         
     return "\n".join(lines)
 
-
 def clean_html(raw_html: str) -> str:
     """Usuwa tagi HTML i zamienia <br>, <p>, <div> na znaki nowej linii."""
     text = re.sub(r'<br\s*/?>', '\n', raw_html, flags=re.IGNORECASE)
-    text = re.sub(r'</?(p|div|tr|table)[^>]*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</?(p|div|tr|table|td)[^>]*>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'<[^>]+>', '', text)
     return text
 
 def extract_clean_pgn(text: str) -> str:
     """
-    Wyciąga blok PGN od [Event ...] aż do gwiazdki lub wyniku (*, 1-0, 0-1, 1/2-1/2),
-    zapewniając poprawny odstęp między nagłówkami a listą posunięć.
+    Dzieli treść na linie:
+    1. Zbiera wszystkie nagłówki [Tag "Value"]
+    2. Zbiera posunięcia (1.e4 c5...) odrzucając stopki ICCF o czasie i linkach.
     """
     text = clean_html(text)
-    
-    # 1. Znajdź początek PGN (pierwszy nagłówek)
+    text = text.replace('\xa0', ' ').replace('&nbsp;', ' ')
+
     start_idx = text.find('[Event')
     if start_idx == -1:
+        start_idx = text.find('[')
+    if start_idx == -1:
         return ""
-    
-    pgn_candidate = text[start_idx:]
-    
-    # 2. Obetnij tekst na końcu partii (wynik lub gwiazdka *)
-    # Szukamy sekwencji ruchów zakończonej *, 1-0, 0-1 lub 1/2-1/2
-    match = re.search(r'(\[Event[\s\S]*?(\*|1-0|0-1|1/2-1/2))', pgn_candidate)
-    if match:
-        pgn_candidate = match.group(1)
-        
-    lines = pgn_candidate.splitlines()
+
+    lines = text[start_idx:].splitlines()
     headers = []
-    movetext_parts = []
-    in_moves = False
-    
+    moves = []
+
     for line in lines:
         stripped = line.strip()
         if not stripped:
             continue
+        
+        # Stopki ICCF oznaczające koniec zapisu ruchów
+        if "Pozostały czas" in stripped or "Wyświetl partię" in stripped or "https://" in stripped or "http://" in stripped:
+            break
+
         if stripped.startswith('['):
-            if not in_moves:
-                headers.append(stripped)
+            headers.append(stripped)
         else:
-            # Ignoruj polskie stopki ICCF o czasie
-            if "Pozostały czas" in stripped or "Wyświetl partię" in stripped:
-                continue
-            in_moves = True
-            movetext_parts.append(stripped)
-            
-    # Standard PGN WYMAGA pustej linii między nagłówkami a ruchami!
-    clean_pgn = '\n'.join(headers) + '\n\n' + ' '.join(movetext_parts)
-    return clean_pgn
+            moves.append(stripped)
+
+    # Standard PGN wymaga pustej linii między nagłówkami a ruchami
+    return '\n'.join(headers) + '\n\n' + ' '.join(moves)
 
 def process_pgn(pgn_text: str):
     try:
