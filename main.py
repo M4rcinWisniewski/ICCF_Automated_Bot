@@ -61,11 +61,25 @@ def analyze_board(board: chess.Board, seconds: int = 90) -> str:
     return "\n".join(lines)
 
 def extract_clean_pgn(text: str) -> str:
-    # Wyciąga blok od [Event do zakończenia partii (*, 1-0, 0-1, 1/2-1/2)
-    match = re.search(r'(\[Event[\s\S]*?(\*|1-0|0-1|1/2-1/2))', text)
-    if match:
-        return match.group(1)
-    return text
+    """
+    Wyciąga nagłówki [Tag ...] oraz linie z numerowanymi ruchami (np. 1.e4 c5...),
+    odrzucając polskie stopki o czasie i linki.
+    """
+    lines = text.splitlines()
+    clean_lines = []
+    
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Zostaw nagłówki PGN
+        if stripped.startswith('['):
+            clean_lines.append(stripped)
+        # Zostaw linie z ruchami (zaczynają się od cyfry lub zawierają ruchy)
+        elif re.match(r'^\d+\.', stripped) or any(m in stripped for m in ['1-0', '0-1', '1/2-1/2', '*']):
+            clean_lines.append(stripped)
+            
+    return '\n'.join(clean_lines)
 
 def process_pgn(pgn_text: str):
     try:
@@ -74,6 +88,7 @@ def process_pgn(pgn_text: str):
         game = chess.pgn.read_game(pgn_io)
         
         if not game:
+            print("[DEBUG] Nie udało się odczytać struktury PGN.")
             return
 
         white = game.headers.get("White", "Nieznany")
@@ -84,19 +99,28 @@ def process_pgn(pgn_text: str):
         url_match = re.search(r'https?://(?:www\.)?iccf\.com/game\?id=\d+', pgn_text)
         game_url = url_match.group(0) if url_match else game.headers.get("Site", "https://www.iccf.com")
 
+        # Ustawiamy szachownicę i odtwarzamy ruchy
         board = game.board()
+        moves_count = 0
         for move in game.mainline_moves():
             board.push(move)
+            moves_count += 1
 
-        is_my_turn = (board.turn == chess.WHITE and ICCF_USERNAME.lower() in white.lower()) or \
-                     (board.turn == chess.BLACK and ICCF_USERNAME.lower() in black.lower())
+        print(f"[DEBUG] Wczytano partię: {white} vs {black} | Wykonanych półruchów: {moves_count} | FEN: {board.fen()}")
+
+        user_clean = ICCF_USERNAME.lower().strip()
+        is_white = user_clean in white.lower()
+        is_black = user_clean in black.lower()
+
+        is_my_turn = (board.turn == chess.WHITE and is_white) or \
+                     (board.turn == chess.BLACK and is_black)
 
         if is_my_turn and not board.is_game_over():
-            opponent = black if ICCF_USERNAME.lower() in white.lower() else white
+            opponent = black if is_white else white
             color = "Białe" if board.turn == chess.WHITE else "Czarne"
             move_num = board.fullmove_number
             
-            print(f"Analizowanie pozycji przeciwko {opponent}...")
+            print(f"Analizowanie pozycji przeciwko {opponent} (Ruch {move_num}, {color})...")
             top_lines = analyze_board(board, seconds=90)
             
             safe_event = escape_markdown(event)
@@ -113,7 +137,7 @@ def process_pgn(pgn_text: str):
             send_telegram(msg)
 
     except Exception as e:
-        print(f"Pominięto partię ze względu na błąd parsowania: {e}")
+        print(f"Pominięto partię ze względu na błąd: {e}")
         
 def run():
     if not all([EMAIL_ACCOUNT, EMAIL_PASSWORD, TELEGRAM_TOKEN, CHAT_ID, ICCF_USERNAME]):
