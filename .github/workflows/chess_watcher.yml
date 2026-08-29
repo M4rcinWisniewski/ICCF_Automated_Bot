@@ -38,4 +38,4 @@ jobs:
           ICCF_USERNAME: ${{ secrets.ICCF_USERNAME }}
           STOCKFISH_PATH: "/usr/games/stockfish"
         run: |
-          python script.py
+          python main.py
