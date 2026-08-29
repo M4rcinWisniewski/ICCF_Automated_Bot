@@ -3,10 +3,13 @@ import imaplib
 import io
 import os
 import sys
+from dotenv import load_dotenv
 import chess
 import chess.engine
 import chess.pgn
 import requests
+
+load_dotenv()
 
 IMAP_SERVER = os.environ.get("IMAP_SERVER", "imap.gmail.com")
 EMAIL_ACCOUNT = os.environ.get("EMAIL_ACCOUNT")
@@ -15,6 +18,13 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 ICCF_USERNAME = os.environ.get("ICCF_USERNAME")
 STOCKFISH_PATH = os.environ.get("STOCKFISH_PATH", "/usr/games/stockfish")
+
+def escape_markdown(text: str) -> str:
+    """Zabezpiecza znaki specjalne przed wywaleniem błędu w Markdown."""
+    escape_chars = r"_*`["
+    for char in escape_chars:
+        text = text.replace(char, f"\\{char}")
+    return text
 
 def send_telegram(text: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -35,7 +45,6 @@ def analyze_board(board: chess.Board, seconds: int = 90) -> str:
         "Skill Level": 20
     })
 
-    # Analiza 3 najlepszych linii
     info = engine.analyse(board, chess.engine.Limit(time=seconds), multipv=3)
     engine.quit()
 
@@ -57,8 +66,8 @@ def process_pgn(pgn_text: str):
     if not game:
         return
 
-    white = game.headers.get("White", "")
-    black = game.headers.get("Black", "")
+    white = game.headers.get("White", "Nieznany")
+    black = game.headers.get("Black", "Nieznany")
     game_url = game.headers.get("Site", "https://www.iccf.com")
     event = game.headers.get("Event", "Partia ICCF")
 
@@ -76,10 +85,13 @@ def process_pgn(pgn_text: str):
         print(f"Analizowanie pozycji przeciwko {opponent}...")
         top_lines = analyze_board(board, seconds=90)
         
+        safe_event = escape_markdown(event)
+        safe_opponent = escape_markdown(opponent)
+        
         msg = (
             f"♟️ *Ruch na ICCF!*\n"
-            f"🏆 *Turniej:* {event}\n"
-            f"👤 *Rywal:* {opponent} ({color})\n"
+            f"🏆 *Turniej:* {safe_event}\n"
+            f"👤 *Rywal:* {safe_opponent} ({color})\n"
             f"🔗 [Przejdź do partii na ICCF]({game_url})\n\n"
             f"*Rekomendacje Stockfish (Top 3):*\n{top_lines}"
         )
@@ -94,15 +106,15 @@ def run():
     mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
     mail.select("INBOX")
 
-    status, messages = mail.search(None, '(UNSEEN FROM "iccf.com")')
-    if status != "OK" or not messages[0]:
-        print("Brak nowych powiadomień z ICCF.")
+    status, messages = mail.search(None, "UNSEEN")
+    if status != "OK" or not messages or not messages[0].strip():
+        print("Brak nowych powiadomień w skrzynce.")
         mail.close()
         mail.logout()
         return
 
     msg_ids = messages[0].split()
-    print(f"Znaleziono {len(msg_ids)} nowych powiadomień. Rozpoczynanie przetwarzania...")
+    print(f"Znaleziono {len(msg_ids)} nowych powiadomień. Przetwarzanie...")
 
     for msg_id in msg_ids:
         res, data = mail.fetch(msg_id, "(RFC822)")
@@ -126,4 +138,4 @@ def run():
     mail.logout()
 
 if __name__ == "__main__":
-   run()
+    run()
