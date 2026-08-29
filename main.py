@@ -59,43 +59,58 @@ def analyze_board(board: chess.Board, seconds: int = 90) -> str:
         
     return "\n".join(lines)
 
+def extract_clean_pgn(text: str) -> str:
+    # Wyciąga blok od [Event do zakończenia partii (*, 1-0, 0-1, 1/2-1/2)
+    match = re.search(r'(\[Event[\s\S]*?(\*|1-0|0-1|1/2-1/2))', text)
+    if match:
+        return match.group(1)
+    return text
+
 def process_pgn(pgn_text: str):
-    pgn_io = io.StringIO(pgn_text)
-    game = chess.pgn.read_game(pgn_io)
-    
-    if not game:
-        return
-
-    white = game.headers.get("White", "Nieznany")
-    black = game.headers.get("Black", "Nieznany")
-    game_url = game.headers.get("Site", "https://www.iccf.com")
-    event = game.headers.get("Event", "Partia ICCF")
-
-    board = game.board()
-    for move in game.mainline_moves():
-        board.push(move)
-
-    is_my_turn = (board.turn == chess.WHITE and ICCF_USERNAME.lower() in white.lower()) or \
-                 (board.turn == chess.BLACK and ICCF_USERNAME.lower() in black.lower())
-
-    if is_my_turn and not board.is_game_over():
-        opponent = black if ICCF_USERNAME.lower() in white.lower() else white
-        color = "Białe" if board.turn == chess.WHITE else "Czarne"
+    try:
+        clean_text = extract_clean_pgn(pgn_text)
+        pgn_io = io.StringIO(clean_text)
+        game = chess.pgn.read_game(pgn_io)
         
-        print(f"Analizowanie pozycji przeciwko {opponent}...")
-        top_lines = analyze_board(board, seconds=90)
-        
-        safe_event = escape_markdown(event)
-        safe_opponent = escape_markdown(opponent)
-        
-        msg = (
-            f"♟️ *Ruch na ICCF!*\n"
-            f"🏆 *Turniej:* {safe_event}\n"
-            f"👤 *Rywal:* {safe_opponent} ({color})\n"
-            f"🔗 [Przejdź do partii na ICCF]({game_url})\n\n"
-            f"*Rekomendacje Stockfish (Top 3):*\n{top_lines}"
-        )
-        send_telegram(msg)
+        if not game:
+            return
+
+        white = game.headers.get("White", "Nieznany")
+        black = game.headers.get("Black", "Nieznany")
+        event = game.headers.get("Event", "Partia ICCF")
+
+        # Szukamy bezpośredniego linku do partii w całym mailu
+        url_match = re.search(r'https?://(?:www\.)?iccf\.com/game\?id=\d+', pgn_text)
+        game_url = url_match.group(0) if url_match else game.headers.get("Site", "https://www.iccf.com")
+
+        board = game.board()
+        for move in game.mainline_moves():
+            board.push(move)
+
+        is_my_turn = (board.turn == chess.WHITE and ICCF_USERNAME.lower() in white.lower()) or \
+                     (board.turn == chess.BLACK and ICCF_USERNAME.lower() in black.lower())
+
+        if is_my_turn and not board.is_game_over():
+            opponent = black if ICCF_USERNAME.lower() in white.lower() else white
+            color = "Białe" if board.turn == chess.WHITE else "Czarne"
+            
+            print(f"Analizowanie pozycji przeciwko {opponent}...")
+            top_lines = analyze_board(board, seconds=90)
+            
+            safe_event = escape_markdown(event)
+            safe_opponent = escape_markdown(opponent)
+            
+            msg = (
+                f"♟️ *Ruch na ICCF!*\n"
+                f"🏆 *Turniej:* {safe_event}\n"
+                f"👤 *Rywal:* {safe_opponent} ({color})\n"
+                f"🔗 [Przejdź do partii na ICCF]({game_url})\n\n"
+                f"*Rekomendacje Stockfish (Top 3):*\n{top_lines}"
+            )
+            send_telegram(msg)
+
+    except Exception as e:
+        print(f"Pominięto partię ze względu na błąd parsowania: {e}")
 
 def run():
     if not all([EMAIL_ACCOUNT, EMAIL_PASSWORD, TELEGRAM_TOKEN, CHAT_ID, ICCF_USERNAME]):
