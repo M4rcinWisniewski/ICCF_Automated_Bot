@@ -94,6 +94,7 @@ def process_pgn(pgn_text: str):
         if is_my_turn and not board.is_game_over():
             opponent = black if ICCF_USERNAME.lower() in white.lower() else white
             color = "Białe" if board.turn == chess.WHITE else "Czarne"
+            move_num = board.fullmove_number
             
             print(f"Analizowanie pozycji przeciwko {opponent}...")
             top_lines = analyze_board(board, seconds=90)
@@ -105,6 +106,7 @@ def process_pgn(pgn_text: str):
                 f"♟️ *Ruch na ICCF!*\n"
                 f"🏆 *Turniej:* {safe_event}\n"
                 f"👤 *Rywal:* {safe_opponent} ({color})\n"
+                f"🔢 *Posunięcie:* {move_num}. ({color.lower()})\n"
                 f"🔗 [Przejdź do partii na ICCF]({game_url})\n\n"
                 f"*Rekomendacje Stockfish (Top 3):*\n{top_lines}"
             )
@@ -112,7 +114,7 @@ def process_pgn(pgn_text: str):
 
     except Exception as e:
         print(f"Pominięto partię ze względu na błąd parsowania: {e}")
-
+        
 def run():
     if not all([EMAIL_ACCOUNT, EMAIL_PASSWORD, TELEGRAM_TOKEN, CHAT_ID, ICCF_USERNAME]):
         print("Błąd: Brak zdefiniowanych wymaganych zmiennych środowiskowych.")
