@@ -21,7 +21,6 @@ ICCF_USERNAME = os.environ.get("ICCF_USERNAME")
 STOCKFISH_PATH = os.environ.get("STOCKFISH_PATH", "/usr/games/stockfish")
 
 def escape_markdown(text: str) -> str:
-    """Zabezpiecza znaki specjalne przed wywaleniem błędu w Markdown."""
     escape_chars = r"_*`["
     for char in escape_chars:
         text = text.replace(char, f"\\{char}")
@@ -61,18 +60,13 @@ def analyze_board(board: chess.Board, seconds: int = 90) -> str:
     return "\n".join(lines)
 
 def clean_html(raw_html: str) -> str:
-    """Usuwa tagi HTML i zamienia <br>, <p>, <div> na znaki nowej linii."""
+    """Usuwa tagi HTML i zamienia znaczniki na nową linię lub spacje."""
     text = re.sub(r'<br\s*/?>', '\n', raw_html, flags=re.IGNORECASE)
     text = re.sub(r'</?(p|div|tr|table|td)[^>]*>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'<[^>]+>', '', text)
     return text
 
 def extract_clean_pgn(text: str) -> str:
-    """
-    Dzieli treść na linie:
-    1. Zbiera wszystkie nagłówki [Tag "Value"]
-    2. Zbiera posunięcia (1.e4 c5...) odrzucając stopki ICCF o czasie i linkach.
-    """
     text = clean_html(text)
     text = text.replace('\xa0', ' ').replace('&nbsp;', ' ')
 
@@ -91,8 +85,7 @@ def extract_clean_pgn(text: str) -> str:
         if not stripped:
             continue
         
-        # Stopki ICCF oznaczające koniec zapisu ruchów
-        if "Pozostały czas" in stripped or "Wyświetl partię" in stripped or "https://" in stripped or "http://" in stripped:
+        if "Pozostały czas" in stripped or "Wyświetl partię" in stripped:
             break
 
         if stripped.startswith('['):
@@ -100,7 +93,6 @@ def extract_clean_pgn(text: str) -> str:
         else:
             moves.append(stripped)
 
-    # Standard PGN wymaga pustej linii między nagłówkami a ruchami
     return '\n'.join(headers) + '\n\n' + ' '.join(moves)
 
 def process_pgn(pgn_text: str):
@@ -195,15 +187,27 @@ def run():
             if isinstance(response_part, tuple):
                 msg = email.message_from_bytes(response_part[1])
                 
-                for part in msg.walk():
-                    filename = part.get_filename()
-                    if filename and filename.endswith(".pgn"):
-                        payload = part.get_payload(decode=True).decode("utf-8", errors="ignore")
-                        process_pgn(payload)
-                    elif part.get_content_type() == "text/plain":
-                        body = part.get_payload(decode=True).decode("utf-8", errors="ignore")
-                        if "[Event " in body and "[Site " in body:
-                            process_pgn(body)
+                # Zbieramy treść ze wszystkich części maila (zarówno plain, jak i html)
+                full_body = ""
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        content_type = part.get_content_type()
+                        if content_type in ["text/plain", "text/html"]:
+                            try:
+                                payload = part.get_payload(decode=True)
+                                if payload:
+                                    full_body += payload.decode("utf-8", errors="ignore") + "\n"
+                            except Exception:
+                                pass
+                else:
+                    payload = msg.get_payload(decode=True)
+                    if payload:
+                        full_body = payload.decode("utf-8", errors="ignore")
+
+                if "[Event" in full_body:
+                    process_pgn(full_body)
+                else:
+                    print(f"[DEBUG] Wiadomość {msg_id} nie zawiera wzorca [Event.")
 
         mail.store(msg_id, "+FLAGS", "\\Seen")
 
