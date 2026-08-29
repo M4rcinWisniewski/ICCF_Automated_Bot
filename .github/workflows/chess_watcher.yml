@@ -2,7 +2,7 @@ name: ICCF Chess Notifier
 
 on:
   schedule:
-    - cron: '*/20 * * * *'
+    - cron: '13,33,53 * * * *'
   workflow_dispatch:
 
 jobs:
